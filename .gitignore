@@ -1,0 +1,32 @@
+# --- Secrets ---
+# Ignore real env files, but always keep the committed template.
+.env
+.env.*
+!.env.example
+
+# --- Local-only data pack (never commit) ---
+data/
+data.zip
+*.zip
+*.db
+*.sqlite
+*.sqlite3
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+
+# --- Node / frontend ---
+node_modules/
+frontend/dist/
+dist/
+*.log
+
+# --- OS / editor ---
+.DS_Store
+.vscode/
+.idea/

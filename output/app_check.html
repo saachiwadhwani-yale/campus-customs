@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Campus Customs — App Check</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Bagel+Fat+One&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --navy-ink: #0b2a5e; --blue: #2f7be6; --muted: #5f6c86; --ink: #1b2a4a;
+      --metal-blue: linear-gradient(180deg, #7fc0ff 0%, #2f7be6 46%, #1a54c8 54%, #58a4f2 100%);
+      --stars: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='80'%20height='80'%20viewBox='0%200%2080%2080'%3E%3Cpath%20d='M18%208L20%2016L28%2018L20%2020L18%2028L16%2020L8%2018L16%2016Z'%20fill='%2380b6ff'%20opacity='0.5'/%3E%3Cpath%20d='M58%2050L59.5%2055L64%2056.5L59.5%2058L58%2063L56.5%2058L52%2056.5L56.5%2055Z'%20fill='%23b9a6ff'%20opacity='0.45'/%3E%3C/svg%3E");
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 2rem 1rem 4rem; color: var(--ink);
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; line-height: 1.55;
+      background: var(--stars), linear-gradient(135deg, #eaf5ff 0%, #f3ecff 45%, #e7fbff 100%);
+      background-attachment: fixed;
+    }
+    .wrap { max-width: 860px; margin: 0 auto; }
+    h1 { font-family: "Bagel Fat One", system-ui, sans-serif; font-weight: 400; color: var(--navy-ink); font-size: 1.9rem; margin: 0 0 .3rem; }
+    .intro { color: var(--muted); margin: 0 0 1.75rem; }
+    figure {
+      margin: 0 0 1.75rem; background: #fff; border: 2px solid #4f83c9; border-radius: 12px; overflow: hidden;
+      box-shadow: inset 1px 1px 0 #fff, inset -2px -2px 0 #b8cbe6, 0 8px 20px rgba(31,95,208,.18);
+    }
+    figure h2 {
+      font-family: system-ui, sans-serif; font-size: .95rem; margin: 0; padding: .5rem .9rem; color: #fff;
+      background: var(--metal-blue); border-bottom: 2px solid #1a4aa8; text-shadow: 0 1px 1px rgba(10,40,110,.5);
+    }
+    figure h2::before { content: "★ "; }
+    figure img { display: block; width: 100%; height: auto; background: #f7fbff; }
+    figcaption { padding: .7rem .9rem .9rem; font-size: .92rem; color: var(--ink); }
+    figcaption b { color: var(--navy-ink); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>★ Campus Customs — App Check</h1>
+    <p class="intro">Three tested scenarios, with screenshots and results.</p>
+
+    <figure>
+      <h2>1. Inventory level of an item through chat</h2>
+      <img src="app_check_images/1-inventory-chat.png" alt="Chat showing an item's stock by size" />
+      <figcaption><b>Result:</b> Handsome Dan reported the correct in-stock sizes for the item, matching the database.</figcaption>
+    </figure>
+
+    <figure>
+      <h2>2. Dynamic search results after asking for hoodies</h2>
+      <img src="app_check_images/2-search-hoodies.png" alt="Products page filtered to hoodies after a chat search" />
+      <figcaption><b>Result:</b> Asking for hoodies filtered the Products page to matching items instantly.</figcaption>
+    </figure>
+
+    <figure>
+      <h2>3. Wishlist (usability addition from Problem 9)</h2>
+      <img src="app_check_images/3-wishlist.png" alt="Wishlist page showing saved items" />
+      <figcaption><b>Result:</b> Saved items appeared on the Wishlist page and persisted after reload.</figcaption>
+    </figure>
+  </div>
+</body>
+</html>
