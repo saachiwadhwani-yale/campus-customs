@@ -27,6 +27,7 @@ export interface ProductCard {
   description: string
   colors: string[]
   available_sizes: string[]
+  stock_by_size?: Record<string, number>
   in_stock: boolean
 }
 

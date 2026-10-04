@@ -24,6 +24,9 @@ from models import ChatReply, ChatResponse, ChatTurn, Customer, ProductCard
 from tools import (
     audit_append,
     cards_for_ids,
+    check_stock,
+    get_product_details,
+    list_garment_types,
     load_env,
     load_history_turns,
     load_prompt,
@@ -62,10 +65,6 @@ def build_agent() -> Agent[ChatDeps, ChatReply]:
         base_url="https://api.portkey.ai/v1",
         default_headers={"x-portkey-api-key": portkey_key},
     )
-    # No tool-calling: searching the catalogue is done locally (see run_chat) and
-    # the matching products are injected into the prompt. This keeps the whole
-    # exchange to a SINGLE model round-trip (~1-2s) instead of the two the model
-    # needs when it has to call a search tool and then answer.
     agent: Agent[ChatDeps, ChatReply] = Agent(
         OpenAIChatModel(model_name(), provider=OpenAIProvider(openai_client=client)),
         deps_type=ChatDeps,
@@ -73,9 +72,32 @@ def build_agent() -> Agent[ChatDeps, ChatReply]:
         system_prompt=load_prompt(),
     )
 
-    # Dependency-driven context, injected into the system prompt each run so the
-    # agent knows who it's talking to and what's on their screen — no tool call.
+    # --- Catalogue tools (no dependencies) -------------------------------------
+    # Registered on the agent so the model calls them while answering.
+    agent.tool_plain(search_catalogue)
+    agent.tool_plain(get_product_details)
+    agent.tool_plain(check_stock)
+    agent.tool_plain(list_garment_types)
 
+    # --- Dependency tools (need ChatDeps via RunContext) -----------------------
+    @agent.tool
+    def get_customer_info(ctx: RunContext[ChatDeps]) -> str:
+        """Return the signed-in customer's name and email, or note they're a guest."""
+        c = ctx.deps.customer
+        if c is None:
+            return "The customer is a guest and is not logged in."
+        return f"name: {c.name}, email: {c.email}"
+
+    @agent.tool
+    def products_on_page(ctx: RunContext[ChatDeps]) -> list[ProductCard]:
+        """Return the products currently shown on the customer's screen.
+
+        Use for follow-ups like "which of these is cheapest?" or "is the first one
+        in my size?".
+        """
+        return ctx.deps.page_products
+
+    # --- Dependency context also surfaced as system-prompt instructions ---------
     @agent.instructions
     def customer_identity(ctx: RunContext[ChatDeps]) -> str:
         c = ctx.deps.customer
@@ -98,7 +120,8 @@ def build_agent() -> Agent[ChatDeps, ChatReply]:
             "The customer is currently looking at these products on the page:\n"
             f"{listing}\n"
             "If they ask a follow-up such as 'which is cheapest', 'the first one', "
-            "or 'is that in my size', assume they mean these items."
+            "or 'is that in my size', assume they mean these items (or call "
+            "products_on_page for full details)."
         )
 
     return agent
@@ -137,6 +160,37 @@ def _format_history(history: list[ChatTurn]) -> str:
     return "\n".join(lines)
 
 
+def _tool_steps(result) -> list[dict]:
+    """Extract the agent's actual tool calls (name, args, result) for the audit."""
+    steps: list[dict] = []
+    try:
+        messages = result.all_messages()
+    except Exception:
+        return steps
+    for m in messages:
+        for part in getattr(m, "parts", []):
+            kind = getattr(part, "part_kind", "")
+            if kind == "tool-call":
+                name = getattr(part, "tool_name", "")
+                if name == "final_result":  # PydanticAI's structured-output tool
+                    continue
+                try:
+                    args = part.args_as_dict()
+                except Exception:
+                    args = getattr(part, "args", None)
+                steps.append({"tool": name, "args": args, "result": None})
+            elif kind == "tool-return":
+                name = getattr(part, "tool_name", "")
+                summary = str(getattr(part, "content", ""))
+                if len(summary) > 400:
+                    summary = summary[:400] + "…"
+                for s in reversed(steps):
+                    if s["tool"] == name and s["result"] is None:
+                        s["result"] = summary
+                        break
+    return steps
+
+
 async def run_chat(
     message: str,
     history: list[ChatTurn] | None = None,
@@ -160,70 +214,37 @@ async def run_chat(
 
     deps = ChatDeps(customer=customer, page_products=cards_for_ids(page_product_ids))
 
-    # Search the catalogue locally (sub-millisecond) and inject the matches, so
-    # the model answers in one round-trip instead of calling a search tool first.
-    candidates = search_catalogue(message, limit=6)
-    # Label candidates with short codes (p1, p2, …) the model echoes back instead
-    # of long id slugs — fewer output tokens means a faster response.
-    code_to_id = {f"p{i + 1}": c.product_id for i, c in enumerate(candidates)}
-
-    parts: list[str] = []
+    # Give the agent the recent conversation plus the new message; it decides which
+    # tools to call (search_catalogue, check_stock, …) to answer.
     if history:
-        parts.append("Conversation so far:\n" + _format_history(history))
-    if candidates:
-        listing = "\n".join(f"  [p{i + 1}] {_describe(c)}" for i, c in enumerate(candidates))
-        parts.append(
-            "Matching products (the ONLY products you may show — put the best few "
-            "CODES like p1, p3 in product_ids, best first):\n" + listing
-        )
-    parts.append(f"Customer's new message: {message}")
-    prompt = "\n\n".join(parts)
+        prompt = "Conversation so far:\n" + _format_history(history) + f"\n\nCustomer's new message: {message}"
+    else:
+        prompt = message
 
-    # Each agent run logs its activity to the append-only audit trail.
     who = f"user:{user_id}" if user_id is not None else "guest"
-    steps: list[dict] = [
-        {
-            "tool": "search_catalogue",
-            "args": {"query": message, "limit": 6},
-            "result": {"product_ids": [c.product_id for c in candidates], "count": len(candidates)},
-        }
-    ]
 
     try:
         result = await agent.run(prompt, deps=deps)
     except Exception as exc:
-        steps.append({"tool": "model.generate", "args": {"model": model_name()}, "result": {"error": str(exc)}})
         # Azure's content filter blocks jailbreak / unsafe prompts before the model
         # replies. Treat that as a graceful safety decline, not a crash.
         if "content_filter" in str(exc).lower() or "content management policy" in str(exc).lower():
-            audit_append({"who": who, "message": message, "steps": steps, "stop_reason": "content_filtered"})
+            audit_append({"who": who, "message": message, "steps": [{"tool": "model", "args": {}, "result": {"error": "content_filter"}}], "stop_reason": "content_filtered"})
             return ChatResponse(
                 reply=(
                     "I can only help with Campus Customs products and your shopping — "
                     "is there something I can help you find? Woof!"
                 )
             )
-        audit_append({"who": who, "message": message, "steps": steps, "stop_reason": "error"})
+        audit_append({"who": who, "message": message, "steps": [{"tool": "model", "args": {}, "result": {"error": str(exc)}}], "stop_reason": "error"})
         raise
 
     reply: ChatReply = result.output
-    # Map short codes back to real ids (tolerate the model returning a real id).
-    resolved_ids = [code_to_id.get(pid, pid) for pid in reply.product_ids]
-    products = cards_for_ids(resolved_ids)
+    products = cards_for_ids(reply.product_ids)
 
-    steps.append(
-        {
-            "tool": "model.generate",
-            "args": {
-                "model": model_name(),
-                "candidates": len(candidates),
-                "has_history": bool(history),
-                "page_products": len(deps.page_products),
-                "logged_in": customer is not None,
-            },
-            "result": {"reply": reply.reply, "product_ids": resolved_ids},
-        }
-    )
+    # Build the audit steps from the agent's actual tool calls this run.
+    steps = _tool_steps(result)
+    steps.append({"tool": "model.final", "args": {"model": model_name()}, "result": {"reply": reply.reply, "product_ids": reply.product_ids}})
 
     # Save this turn for logged-in customers.
     if user_id is not None:
@@ -236,7 +257,7 @@ async def run_chat(
             "who": who,
             "message": message,
             "steps": steps,
-            "stop_reason": "completed" if products or not candidates else "no_products_shown",
+            "stop_reason": "completed" if products or reply.reply else "no_products_shown",
         }
     )
 

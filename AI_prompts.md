@@ -158,10 +158,6 @@ when i tried to test scenario 1, it said it doesn't have access to the inventory
 
 ### Follow-up Prompt
 
-will you add the screenshots for the app check?
-
-### Follow-up Prompt
-
 i tried to ask the chat how many there are and it's saying there is 1. shouldn't that prompt it to check the stock and return the values? if i ask how many there are, it should tell me the breakdown across sizes, not just that there is 1 type of shirt. i want this behavior to be implied nad obvious even if the user asks a slightly different question
 
 ### Follow-up Prompt
@@ -181,3 +177,9 @@ also update harness.md to include everything that explains how the website works
 ### Prompt
 
 now problem 13, we will do all the final set up. create a .env.example file, and a .gitignore file that makes sure the real env, db, and product images don't get pushed to github. also create README.md that explains how to run the frontend and backend after setting up a datapack. 
+
+### Follow-up Prompt
+
+on a previous homework assignment, i got feedback that my tools weren't registered correctly. check that the tools are registered correctly on this assignment. 
+
+are there any other optimizations that can be done while keeping the tools registered

@@ -59,6 +59,11 @@ class ProductCard(BaseModel):
     available_sizes: list[str] = Field(
         default_factory=list, description="Sizes currently in stock"
     )
+    stock_by_size: dict[str, int] = Field(
+        default_factory=dict,
+        description="Exact units per size (0 = sold out); lets the agent answer "
+        "'how many' questions from a search result without a separate stock call.",
+    )
     in_stock: bool = True
 
 

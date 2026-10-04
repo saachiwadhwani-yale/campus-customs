@@ -11,7 +11,7 @@ data models, tools, safety, and audit trail.
 | Backend | FastAPI + Uvicorn (`hw4/backend`), **:8000** — `uvicorn main:app --reload --port 8000` from `backend/` |
 | Database | SQLite `data/campus_customs.db` — the single source of truth |
 | Chat model | `gpt-4o-mini` via **Portkey** (`PORTKEY_API_KEY` from `ai_class/.env`) |
-| Agent | PydanticAI, structured output, **single model round-trip** per message (~1–2s) |
+| Agent | PydanticAI, structured output, **registered tools the agent calls** (~3–4s/msg) |
 | Auth | PBKDF2-SHA256, per-user salt, 600k rounds |
 | Persistence | Chat history in `chat_messages`; wishlist in browser `localStorage` |
 | Audit | Append-only `output/audit_trail.json` |
@@ -66,33 +66,33 @@ Four files, hw3-style: `prompts/prompt.md` (system prompt + safety),
 `run_chat()`). `main.py` exposes `/api/chat` and imports `run_chat` lazily so a
 missing Portkey key only affects chat.
 
-**Single round-trip.** The agent is built **without tool-calling**. `run_chat`
-searches the catalogue locally, injects the matching products into the prompt, and
-the model answers in one call (~1–2s instead of ~5–8s). The customer's identity and
-on-screen products are injected as dynamic **instructions** (from `ChatDeps`), not
-tool calls. The agent is built once and cached; `output_type=ChatReply` forces
-`{ reply, product_ids }`.
+**Tool-using agent.** The agent is created once and cached, with
+`output_type=ChatReply` (forces `{ reply, product_ids }`) and **six registered
+tools** it calls while answering. The customer's identity and on-screen products are
+also surfaced as dynamic **instructions** (from `ChatDeps`). A typical reply is two
+model round-trips (call a tool → answer), ~3–4s.
 
-**A message is answered by:** searching the catalogue → labelling matches with
-short codes (`p1`, `p2`…) → one prompt (history + identity/page instructions +
-coded candidates) → one `agent.run()` → mapping codes back to ids →
-`ProductCard`s from the DB. Short codes keep the model's output small (faster).
+**A message is answered by:** `run_chat` passes the recent history + new message to
+`agent.run()` → the model calls the tools it needs (usually one `search_catalogue`)
+→ returns a `ChatReply` with real `product_id`s → the backend turns those into
+`ProductCard`s from the DB. The prompt tells the agent to **minimize tool calls**:
+answer availability/price/color from the single `search_catalogue` result, and only
+call `check_stock` for exact per-size quantities.
 
-### Catalogue helpers (`tools.py`)
+### Tools (`tools.py`), registered on the agent in `agent.py`
 
-Read straight from the DB, so the agent never guesses. `search_catalogue` runs on
-every message; the rest back the product/stock API and the injected context.
+Read straight from the DB, so the agent never guesses.
 
-| Function | Purpose |
-|---|---|
-| `search_catalogue(query, limit=6)` | Weighted whole-word search over name, garment_type, tags, colors, description → `list[ProductCard]` |
-| `stock_summary(product_id)` | Per-size quantity string (`XS:15, S:5, M:0`) injected per candidate for "how many" questions |
-| `get_product_details(product_id)` | One product → `ProductCard` |
-| `check_stock(product_id)` | Per-size stock incl. sold-out → `ProductStock` |
-| `list_garment_types()` | Distinct garment types |
+| Tool | Registered as | Purpose |
+|---|---|---|
+| `search_catalogue(query, limit=6)` | `tool_plain` | Weighted whole-word search over name, garment_type, tags, colors, description → `list[ProductCard]` |
+| `check_stock(product_id)` | `tool_plain` | Per-size stock incl. sold-out → `ProductStock` |
+| `get_product_details(product_id)` | `tool_plain` | One product → `ProductCard` |
+| `list_garment_types()` | `tool_plain` | Distinct garment types |
+| `get_customer_info()` | `tool` (RunContext) | Signed-in customer's name/email, or guest |
+| `products_on_page()` | `tool` (RunContext) | Products the customer is currently viewing |
 
-Each injected candidate carries name, type, price, colors, short description, and
-per-size stock — enough to answer any catalogue question in one pass.
+(`stock_summary` is a non-tool helper used to render page-context products.)
 
 **Search scoring:** whole-word matches only (so "tshirt" can't hit "sweatshirt"),
 weighted by field (garment type & name > tags/colors > description) so an item-type
@@ -162,15 +162,18 @@ logs `stop_reason: content_filtered`. Identity is resolved server-side from
 
 ## Audit Trail
 
-Every run is logged to `output/audit_trail.json`, kept as a **valid JSON array**
-(one object per line inside `[ ... ]`). It stays append-only: each new entry only
-rewrites the trailing `]`, so existing entries are never truncated or wiped.
+Every run is logged to `output/audit_trail.json`, kept as a **valid JSON array**.
+It stays append-only and content-safe: the file always ends with the exact bytes
+`\n]\n`, so a new entry just drops those 3 bytes and writes `,\n<obj>\n]\n` — it
+never scans the content for brackets (tool results may contain `}`/`]`) and never
+wipes existing entries.
 
-Each entry: `time` (UTC), `who` (`user:<id>` or `guest`), `message`, `steps` (each
-a `tool` with `args` and `result` — `search_catalogue`, `model.generate`,
-`save_message`), and `stop_reason` (`completed`, `no_products_shown`,
-`content_filtered`, `error`). Written by `audit_append()` in `tools.py`, called at
-the end of every `run_chat`.
+Each entry: `time` (UTC), `who` (`user:<id>` or `guest`), `message`, `steps`, and
+`stop_reason` (`completed`, `no_products_shown`, `content_filtered`, `error`).
+`steps` are the agent's **actual tool calls** this run — each with the `tool` name,
+its `args`, and a short `result` — followed by `model.final` (the reply +
+`product_ids`) and, for logged-in users, `save_message`. Written by
+`audit_append()` in `tools.py`, called at the end of every `run_chat`.
 
 ## Running the app
 

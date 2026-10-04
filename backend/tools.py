@@ -74,9 +74,16 @@ def _get_conn() -> sqlite3.Connection:
     return conn
 
 
+def _ordered_stock(sizes: list[sqlite3.Row]) -> list[tuple[str, int]]:
+    ordered = sorted(
+        sizes, key=lambda s: SIZE_ORDER.index(s["size"]) if s["size"] in SIZE_ORDER else 99
+    )
+    return [(s["size"], s["quantity"]) for s in ordered]
+
+
 def _row_to_card(row: sqlite3.Row, sizes: list[sqlite3.Row]) -> ProductCard:
-    in_stock_sizes = [s["size"] for s in sizes if s["quantity"] > 0]
-    in_stock_sizes.sort(key=lambda s: SIZE_ORDER.index(s) if s in SIZE_ORDER else 99)
+    stock = _ordered_stock(sizes)
+    in_stock_sizes = [size for size, qty in stock if qty > 0]
     return ProductCard(
         product_id=row["product_id"],
         name=row["name"],
@@ -86,6 +93,7 @@ def _row_to_card(row: sqlite3.Row, sizes: list[sqlite3.Row]) -> ProductCard:
         description=row["description"],
         colors=json.loads(row["colors"]),
         available_sizes=in_stock_sizes,
+        stock_by_size=dict(stock),
         in_stock=bool(in_stock_sizes),
     )
 
@@ -175,9 +183,11 @@ def load_history_messages(user_id: int, limit: int = 40) -> list[ChatHistoryMess
 def audit_append(record: dict) -> None:
     """Append one agent-activity record to the audit trail as valid JSON.
 
-    The file stays a valid JSON array (one object per line inside `[ ... ]`).
-    Appending only rewrites the trailing `]` — existing entries are never
-    truncated or wiped, so the trail is permanent. Each entry records the time,
+    The file is always a valid JSON array: `[\\n<obj>\\n...<obj>\\n]\\n`, one object
+    per line. The writer always ends the file with the exact 3 bytes `\\n]\\n`, so an
+    append just truncates those 3 bytes and writes `,\\n<obj>\\n]\\n`. This never
+    scans the content for brackets (tool results may contain `}`/`]`), and never
+    wipes existing entries — the trail is permanent. Each entry records the time,
     the tool/step name(s) with their args and results, and the stop reason.
     """
     entry = {"time": datetime.now(timezone.utc).isoformat(), **record}
@@ -191,33 +201,20 @@ def audit_append(record: dict) -> None:
 
     with open(AUDIT_PATH, "rb+") as f:
         size = f.seek(0, os.SEEK_END)
-        tail = f.read()[-512:] if size <= 512 else _read_tail(f, size, 512)
-        text = tail.decode("utf-8")
-        close = text.rfind("]")
-        if close == -1:
-            # Legacy/non-array content — convert to a valid array, keeping entries.
-            existing = _parse_legacy_entries(AUDIT_PATH)
-            existing.append(entry)
-            body = ",\n".join(json.dumps(e, ensure_ascii=False) for e in existing)
-            AUDIT_PATH.write_text(f"[\n{body}\n]\n", encoding="utf-8")
+        f.seek(max(0, size - 3))
+        if f.read() == b"\n]\n":
+            # Normal case: drop the trailing "\n]\n" and append the new object.
+            f.seek(size - 3)
+            f.truncate()
+            f.write(f",\n{line}\n]\n".encode("utf-8"))
             return
-        last_obj = text.rfind("}", 0, close)
-        if last_obj == -1:
-            # Empty array "[]" — insert the first element after "[".
-            open_br = text.rfind("[", 0, close)
-            insert_at = size - len(tail) + open_br + 1
-            suffix = f"\n{line}\n]\n"
-        else:
-            insert_at = size - len(tail) + last_obj + 1
-            suffix = f",\n{line}\n]\n"
-        f.seek(insert_at)
-        f.truncate()
-        f.write(suffix.encode("utf-8"))
 
-
-def _read_tail(f, size: int, n: int) -> bytes:
-    f.seek(size - n)
-    return f.read()
+    # Unexpected format (older JSONL, or a file corrupted by an earlier writer):
+    # rebuild a clean, valid array from whatever entries can be recovered.
+    existing = _parse_legacy_entries(AUDIT_PATH)
+    existing.append(entry)
+    body = ",\n".join(json.dumps(e, ensure_ascii=False) for e in existing)
+    AUDIT_PATH.write_text(f"[\n{body}\n]\n", encoding="utf-8")
 
 
 def _parse_legacy_entries(path: Path) -> list[dict]:
@@ -330,6 +327,7 @@ def _search_corpus() -> list[dict]:
                     description=r["description"],
                     colors=colors,
                     available_sizes=in_stock,
+                    stock_by_size=dict(stock),
                     in_stock=bool(in_stock),
                 ),
                 # Precomputed per weighted field: the set of whole words used for

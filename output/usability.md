@@ -4,7 +4,9 @@
 
 ### 1. Search speed (t-shirt search took ~15s)
 
-Originally, when I tested it, just asking for a t-shirt took 15 seconds. This is too long for a customer to wait just to see the search results, and they might just leave the webpage if it takes too long. Making it faster helps to keep customers attention and show them their results faster. The AI was able to get it down to 3 seconds, apparently with an "Azure/Portkey network floow of 1.5s". Even though ideally it would be faster, that is still a 80% decrease in load time.
+Originally, when I tested it, just asking for a t-shirt took 15 seconds. This is too long for a customer to wait just to see the search results, and they might just leave the webpage if it takes too long. Making it faster helps to keep customers attention and show them their results faster. The AI was able to get it down to 3 seconds, apparently with an "Azure/Portkey network floow of 1.5s". Even though ideally it would be faster, that is still a 80% decrease in load time. 
+
+Apparently when I fixed this, Claude removed the tool registrations from the agent. After recieving homework 2 feedback, I told Claude that the agent needed to have tool registrations, and I tried to go back to improving the speed in an alternate way. That brought the timing back up to 5-6 seconds, which is still better than the 15 seconds that it initially took. 
 
 ### 2. Search accuracy ("blue crew necks" returned blue hoodies)
 When searching for something as simple as blue crew necks, the page was showing blue hoodies and no crew necks even though there are crew necks in stock. If a customer doesn't find what they're looking for when they search, they might get confused and then choose to not buy anyting. 
